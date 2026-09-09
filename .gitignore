@@ -10,3 +10,10 @@ node_modules/
 # Paper-trade journals are data, not source, and they grow every week.
 *.sqlite3
 *.sqlite3-journal
+
+# Weekly paper-trade logs are a running record, not source.
+paper_logs/
+
+# Copy artefacts macOS leaves behind ("file 2.py").
+* [0-9].py
+*[0-9] [0-9]*

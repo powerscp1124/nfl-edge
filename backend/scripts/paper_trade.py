@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import argparse
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import numpy as np
@@ -66,11 +66,27 @@ from app.projections.pipeline import (  # noqa: E402
 from app.sim.game_sim import simulate_game  # noqa: E402
 
 
+def _kickoff_of(event: dict):
+    try:
+        return datetime.fromisoformat(
+            str(event.get("commence_time")).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+
+
 def do_record(args) -> int:
     client = OddsAPIClient()
     events = client.list_events()
     if args.event_id:
         events = [e for e in events if e.get("id") == args.event_id]
+    elif args.within_days:
+        # The events endpoint returns most of the season, not the coming week,
+        # so a weekly job without a horizon would simulate 270-odd games.
+        horizon = datetime.now(timezone.utc) + timedelta(days=args.within_days)
+        events = [e for e in events
+                  if (e.get("commence_time") or "")
+                  and _kickoff_of(e) is not None
+                  and _kickoff_of(e) <= horizon]
     if args.limit:
         events = events[:args.limit]
     if not events:
@@ -171,7 +187,20 @@ def project_event(client, event_id, event, args, config, now) -> list[Pick]:
 
 def do_settle(args) -> int:
     from app.ingest.nflverse import load_weekly_stats
-    weekly = load_weekly_stats([args.season])
+    try:
+        weekly = load_weekly_stats([args.season])
+    except Exception as exc:  # noqa: BLE001
+        # nflverse publishes a season's stats only once games have been played,
+        # so early in a season the file does not exist yet. That is the normal
+        # state of a weekly job in September, not an error: say so and leave
+        # the picks pending rather than aborting before anything is recorded.
+        print(f"No outcome data for {args.season} yet "
+              f"({type(exc).__name__}). Nothing settled; picks stay pending.")
+        return 0
+    if weekly.empty:
+        print(f"No outcome data for {args.season} yet. "
+              "Nothing settled; picks stay pending.")
+        return 0
     id_col = "player_id" if "player_id" in weekly.columns else "gsis_id"
     actuals: dict[tuple, dict] = {}
     for _, r in weekly.iterrows():
@@ -256,6 +285,9 @@ def main() -> int:
                     help="fallback week for settlement")
     ap.add_argument("--event-id", default=None)
     ap.add_argument("--limit", type=int, default=None)
+    ap.add_argument("--within-days", type=int, default=8,
+                    help="only record games kicking off within this many days "
+                         "(the events endpoint returns most of the season)")
     ap.add_argument("--sims", type=int, default=10_000)
     ap.add_argument("--seed", type=int, default=2026)
     ap.add_argument("--min-edge", type=float, default=0.03)
