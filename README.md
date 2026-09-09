@@ -54,6 +54,7 @@ thing a betting model can do is look plausible.
 | `projections/explain.py` | Complete, untested |
 | `backtest/engine.py` | Metrics and guards complete and tested |
 | `backtest/runner.py` | Written and run: 285 games/season, three seasons |
+| `paper/journal.py` | Recording 2026 forward; never places a wager |
 | `ingest/odds_api.py` | Run live, including the historical endpoints |
 | `ingest/nflverse.py` | Run live; several schema assumptions corrected |
 | `ingest/context_loader.py` | Run live; point-in-time guard extended to play-by-play |
@@ -112,6 +113,55 @@ it never hands the projection a timestamp at or after kickoff.
 lines **without simulating**: 15 minutes a season against ~2 hours for a
 backtest. Any "does X predict beating the line" question should be answered
 against a harvested CSV before a backtest is considered.
+
+### Paper trading
+
+The model has no demonstrated edge, so it is not deployed to bet. It is
+deployed to *record*. Every constant in it was fitted against 2023-2025, which
+makes a season recorded forward the only test that cannot be contaminated by
+that fitting.
+
+```bash
+cd backend && ./scripts/weekly_paper.sh          # settle, record, report
+```
+
+Run it Friday or Saturday, before kickoff. It is safe to rerun: recording is
+idempotent per calendar day and settlement skips graded rows. Output appends to
+`paper_logs/YYYY-MM-DD.log`, and the journal is `paper_journal.sqlite3`
+(SQLite, because `db/schema.sql` has never been applied to a live database and
+a journal that needs a server standing up is one that does not get written).
+
+Nothing in `app/paper/` or `scripts/paper_trade.py` places a wager, and there
+is no flag that enables one.
+
+**The two seasons are not the same season.** `HISTORY_SEASON` is the data that
+builds the projection; `OUTCOME_SEASON` is where the results land:
+
+```bash
+HISTORY_SEASON=2026 ./scripts/weekly_paper.sh
+```
+
+> **Switch `HISTORY_SEASON` to 2026 around week 5** (8-12 October 2026).
+> Until then projections are built from 2025 rosters, so 2026 rookies and
+> players who changed teams cannot be resolved at all — that is most of the
+> gap between the resolver's ~79% match rate and 100%, and no amount of
+> matching logic fixes it.
+>
+> The trade-off is real rather than free: four weeks of usage data is noisier
+> than a full prior season. Shrinkage toward depth-chart priors softens that,
+> but waiting until week 7 or 8 is equally defensible. What is *not*
+> defensible is leaving it on 2025 all season.
+
+Settlement never blocks recording. A missed settlement is graded next week; a
+missed recording is gone, because the lines are gone. That asymmetry is why
+`weekly_paper.sh` treats a settle failure as non-fatal, and why `settle`
+reports "no outcome data yet" rather than raising when nflverse has not
+published a season's stats — the normal state of the job in September.
+
+Watch, in order: the calibration slope from `calibrate_probs.py` (0.0034 as of
+September 2026), then the beat-the-line rate against the 48.6% baseline, then
+paper ROI. The last is the most tempting number and the least informative at
+these sample sizes.
 
 ## What the backtest found
 
