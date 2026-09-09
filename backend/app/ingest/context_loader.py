@@ -28,6 +28,11 @@ log = logging.getLogger(__name__)
 
 SKILL_POSITIONS = {"QB", "RB", "WR", "TE", "FB"}
 
+# The only keys ``WeatherState`` accepts. A forecast dict also carries
+# provenance, and passing that straight through raises on construction.
+WEATHER_STATE_FIELDS = ("temperature_f", "wind_mph", "precipitation_prob",
+                        "is_dome")
+
 # nflverse column names differ slightly between the weekly frame and the
 # play-by-play aggregates. Mapping them here rather than at each call site
 # means a schema change is a one-line fix.
@@ -783,6 +788,18 @@ def build_context(
             warnings.append(
                 "no weather forecast; outdoor game defaulted to neutral "
                 "conditions")
+    else:
+        # A fetched forecast carries provenance -- source, and a reason when
+        # the lookup failed -- which WeatherState does not accept. Keep only
+        # the fields it takes, and surface an outage as a warning rather than
+        # letting a zero-wind default pass silently for a windy game.
+        source = str(weather.get("source", ""))
+        if source == "unavailable":
+            warnings.append(
+                f"weather unavailable ({weather.get('reason', 'unknown')}); "
+                "outdoor game defaulted to neutral conditions")
+        weather = {k: weather[k] for k in WEATHER_STATE_FIELDS
+                   if k in weather}
 
     depth_ranks = build_depth_ranks(depth, teams, as_of=as_of)
     if not depth_ranks:
@@ -813,6 +830,26 @@ def build_context(
 # --------------------------------------------------------------------------- #
 # Network side
 # --------------------------------------------------------------------------- #
+def _forecast_for(event: dict) -> dict | None:
+    """Kickoff forecast for an event, or None if it cannot be determined.
+
+    Separated from ``fetch_context`` so the network call has one obvious home,
+    and returns None rather than raising: a weather outage should cost the
+    projection its wind adjustment, not the whole slate.
+    """
+    from .teams import teams_from_event
+    from .weather import fetch_weather
+
+    kickoff = event.get("commence_time")
+    if not kickoff:
+        return None
+    try:
+        when = datetime.fromisoformat(str(kickoff).replace("Z", "+00:00"))
+        return fetch_weather(teams_from_event(event).home, when)
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def fetch_context(event_id: str, season: int, through_week: int | None = None
                   ) -> BuiltContext:
     """Live path. Thin wrapper: every decision lives in ``build_context``."""
@@ -841,6 +878,6 @@ def fetch_context(event_id: str, season: int, through_week: int | None = None
         id_map=load_id_map(),
         depth=load_depth_charts([season]),
         injuries=load_injuries([season]),
-        weather=None,
+        weather=_forecast_for(event),
         through_week=through_week,
     )

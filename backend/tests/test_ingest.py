@@ -436,6 +436,54 @@ class TestPaceAndRedZone(unittest.TestCase):
         self.assertAlmostEqual(seconds_per_play(frame, "MIN"), 25.0, delta=0.01)
 
 
+class TestWeatherWiring(unittest.TestCase):
+    """A forecast carries provenance that WeatherState does not accept.
+
+    `fetch_context` used to pass `weather=None` unconditionally, so every live
+    projection ran on neutral conditions and said so in a warning. Wiring the
+    fetch in without filtering would instead raise on construction.
+    """
+
+    def test_the_field_list_matches_WeatherState(self):
+        """If WeatherState gains a field, this list has to gain it too."""
+        import dataclasses
+        from app.ingest.context_loader import WEATHER_STATE_FIELDS
+        from app.projections.environment import WeatherState
+        actual = {f.name for f in dataclasses.fields(WeatherState)}
+        self.assertEqual(set(WEATHER_STATE_FIELDS), actual)
+
+    def test_a_real_forecast_constructs_a_WeatherState(self):
+        from app.ingest.context_loader import WEATHER_STATE_FIELDS
+        from app.projections.environment import WeatherState
+        forecast = {"temperature_f": 41.0, "wind_mph": 18.0,
+                    "precipitation_prob": 0.4, "is_dome": False,
+                    "source": "open-meteo"}
+        state = WeatherState(**{k: forecast[k] for k in WEATHER_STATE_FIELDS
+                                if k in forecast})
+        self.assertAlmostEqual(state.effective_wind, 18.0)
+
+    def test_an_unavailable_forecast_still_constructs(self):
+        from app.ingest.context_loader import WEATHER_STATE_FIELDS
+        from app.projections.environment import WeatherState
+        forecast = {"temperature_f": 60.0, "wind_mph": 0.0,
+                    "precipitation_prob": 0.0, "is_dome": False,
+                    "source": "unavailable", "reason": "timeout"}
+        state = WeatherState(**{k: forecast[k] for k in WEATHER_STATE_FIELDS
+                                if k in forecast})
+        self.assertEqual(state.effective_wind, 0.0)
+
+    def test_a_dome_reports_no_wind(self):
+        from app.ingest.context_loader import WEATHER_STATE_FIELDS
+        from app.projections.environment import WeatherState
+        forecast = {"temperature_f": 70.0, "wind_mph": 0.0,
+                    "precipitation_prob": 0.0, "is_dome": True,
+                    "source": "dome"}
+        state = WeatherState(**{k: forecast[k] for k in WEATHER_STATE_FIELDS
+                                if k in forecast})
+        self.assertTrue(state.is_dome)
+        self.assertEqual(state.effective_wind, 0.0)
+
+
 class TestNonPlayerMarkets(unittest.TestCase):
     """Books price things that are not players."""
 
