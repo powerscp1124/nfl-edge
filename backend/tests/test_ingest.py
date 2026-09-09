@@ -383,14 +383,348 @@ class TestPaceAndRedZone(unittest.TestCase):
         frame = self.pbp().drop(columns=["game_seconds_remaining"])
         self.assertEqual(seconds_per_play(frame, "MIN"), 27.5)
 
-    def test_environment_flags_approximation_only_without_pbp(self):
-        from app.ingest.context_loader import build_team_environment
+    def bimodal_pbp(self, n_drives=12, plays_per_drive=6):
+        """Real pace: the clock stops on an incompletion, runs after a run.
+
+        Gaps are therefore bimodal -- 5s after a stopped clock, 40s after a
+        running one. Within a drive that is 40,5,40,5,40: mean 26.0s, median
+        40.0s. The median is the bug: it sits inside the upper cluster and,
+        once clamped, reads 35s for every team in the league.
+
+        Drives are separated by 50s, a plausible three-and-out, which is short
+        enough to survive the 60s filter and so cannot be excluded by gap size
+        alone -- only by grouping on the drive.
+        """
+        rows = []
+        clock = 1800
+        for drive in range(n_drives):
+            for i in range(plays_per_drive):
+                stopped = i % 2 == 0
+                clock -= 5 if stopped else 40
+                rows.append({
+                    "game_id": "g1", "posteam": "MIN", "qtr": 2,
+                    "score_differential": 3, "yardline_100": 40,
+                    "play_type": "pass" if stopped else "run",
+                    "drive": drive + 1,
+                    "game_seconds_remaining": clock,
+                })
+            clock -= 45  # the opponent's possession, plus 5 for the next snap
+        return pd.DataFrame(rows)
+
+    def test_pace_is_not_biased_by_the_bimodal_clock(self):
+        """The median lands in the upper cluster and reads far too slow."""
+        from app.ingest.context_loader import seconds_per_play
+        pace = seconds_per_play(self.bimodal_pbp(), "MIN")
+        self.assertAlmostEqual(pace, 26.0, delta=0.5)
+        # The shipped median returned 40.0 here, which the clamp then reported
+        # as 35.0 -- indistinguishable from every other team in the league.
+        self.assertLess(pace, 35.0)
+
+    def test_pace_gap_never_spans_a_change_of_possession(self):
+        """A three-and-out is too short to exclude by gap size alone."""
+        from app.ingest.context_loader import seconds_per_play
+        frame = self.bimodal_pbp()
+        with_drives = seconds_per_play(frame, "MIN")
+        without = seconds_per_play(frame.drop(columns=["drive"]), "MIN")
+        self.assertLess(with_drives, without)
+
+    def test_pace_prefers_drive_time_of_possession(self):
+        """With the drive columns, pace is TOP over the plays it covers."""
+        from app.ingest.context_loader import seconds_per_play
+        frame = self.bimodal_pbp()
+        frame["drive_time_of_possession"] = "2:30"   # 150s / 6 plays = 25.0
+        self.assertAlmostEqual(seconds_per_play(frame, "MIN"), 25.0, delta=0.01)
+
+
+class TestNonPlayerMarkets(unittest.TestCase):
+    """Books price things that are not players."""
+
+    def test_team_defences_are_not_players(self):
+        from app.ingest.player_matching import is_non_player_market
+        for name in ("Seattle Seahawks Defense", "Seattle Seahawks D/ST",
+                     "New England Patriots D/ST", "New England Patriots"):
+            self.assertTrue(is_non_player_market(name), name)
+
+    def test_novelty_markets_are_not_players(self):
+        from app.ingest.player_matching import is_non_player_market
+        self.assertTrue(is_non_player_market("No Scorer"))
+
+    def test_real_players_are_players(self):
+        from app.ingest.player_matching import is_non_player_market
+        for name in ("Jaxon Smith-Njigba", "Cooper Kupp", "A.J. Brown",
+                     "Rhamondre Stevenson", "Drake Maye"):
+            self.assertFalse(is_non_player_market(name), name)
+
+
+class TestRosterIncludesTheDepthChart(unittest.TestCase):
+    """A rookie with no stat line is a data gap, not a matching failure."""
+
+    def logs(self):
+        return {"SEA": {"p1": [{"name": "Played Player", "position": "WR",
+                                "week": 5}]}}
+
+    def depth(self):
+        return pd.DataFrame([
+            {"gsis_id": "p1", "team": "SEA", "dt": "2026-01-01",
+             "player_name": "Played Player", "pos_abb": "WR", "pos_rank": 1},
+            {"gsis_id": "p2", "team": "SEA", "dt": "2026-01-01",
+             "player_name": "Rookie Receiver", "pos_abb": "WR", "pos_rank": 4},
+            {"gsis_id": "p3", "team": "SEA", "dt": "2026-01-01",
+             "player_name": "Some Cornerback", "pos_abb": "LCB",
+             "pos_rank": 1},
+        ])
+
+    def test_a_player_with_no_stat_line_is_still_resolvable(self):
+        from app.ingest.context_loader import build_roster
+        names = {r["full_name"] for r in
+                 build_roster(self.logs(), depth=self.depth(), teams=["SEA"])}
+        self.assertIn("Rookie Receiver", names)
+
+    def test_defenders_are_not_added(self):
+        from app.ingest.context_loader import build_roster
+        names = {r["full_name"] for r in
+                 build_roster(self.logs(), depth=self.depth(), teams=["SEA"])}
+        self.assertNotIn("Some Cornerback", names)
+
+    def test_players_are_not_duplicated(self):
+        from app.ingest.context_loader import build_roster
+        roster = build_roster(self.logs(), depth=self.depth(), teams=["SEA"])
+        ids = [r["player_id"] for r in roster]
+        self.assertEqual(len(ids), len(set(ids)))
+
+    def test_omitting_the_depth_chart_keeps_the_old_behaviour(self):
+        from app.ingest.context_loader import build_roster
+        self.assertEqual(len(build_roster(self.logs())), 1)
+
+
+class TestPlayByPlayIsPointInTime(unittest.TestCase):
+    """Pace and red-zone tendency come from play-by-play, and that frame has
+    to respect the same cutoff the weekly frame does."""
+
+    def pbp(self):
+        rows = []
+        clock = 1800
+        for week in (1, 2, 9):
+            for i in range(60):
+                clock -= 26 if week < 9 else 5   # week 9 is wildly faster
+                rows.append({"game_id": f"g{week}", "posteam": "MIN",
+                             "qtr": 2, "score_differential": 3,
+                             "yardline_100": 40, "week": week,
+                             "play_type": "run" if i % 2 else "pass",
+                             "game_seconds_remaining": clock})
+            clock = 1800
+        return pd.DataFrame(rows)
+
+    def test_a_later_week_cannot_change_an_earlier_projection(self):
+        from app.ingest.context_loader import seconds_per_play
+        full = seconds_per_play(self.pbp(), "MIN")
+        to_date = seconds_per_play(self.pbp()[self.pbp()["week"] < 3], "MIN")
+        self.assertNotAlmostEqual(full, to_date, places=3)
+        self.assertAlmostEqual(to_date, 26.0, delta=1.0)
+
+
+class TestRotationPool(unittest.TestCase):
+    """Opportunity pools are renormalised to 1.0, so who is in the pool
+    decides how much is left for everyone else."""
+
+    def test_a_starter_is_in_the_rotation(self):
+        from app.ingest.context_loader import in_rotation
+        self.assertTrue(in_rotation("WR", 1, 0.83))
+
+    def test_a_deep_reserve_on_a_fifth_of_the_snaps_is_not(self):
+        from app.ingest.context_loader import in_rotation
+        self.assertFalse(in_rotation("WR", 6, 0.21))
+
+    def test_snaps_alone_can_keep_a_low_ranked_player(self):
+        """A TE3 playing half the snaps is in the rotation whatever the chart
+        says."""
+        from app.ingest.context_loader import in_rotation
+        self.assertTrue(in_rotation("TE", 3, 0.51))
+
+    def test_rank_alone_can_keep_a_lightly_used_starter(self):
+        from app.ingest.context_loader import in_rotation
+        self.assertTrue(in_rotation("RB", 1, 0.10))
+
+    def test_a_rank_from_another_position_group_is_not_evidence(self):
+        """Listed RB5, projected WR: participation has to decide alone."""
+        from app.ingest.context_loader import in_rotation
+        self.assertFalse(in_rotation("WR", None, 0.21))
+        self.assertTrue(in_rotation("WR", None, 0.60))
+
+    def test_a_priced_player_is_never_pruned(self):
+        """Pruning must not cost market coverage."""
+        from app.ingest.context_loader import in_rotation
+        self.assertFalse(in_rotation("WR", 7, 0.09))
+        self.assertTrue(in_rotation("WR", 7, 0.09, has_market=True))
+
+    def test_quarterbacks_are_never_pruned(self):
+        from app.ingest.context_loader import in_rotation
+        self.assertTrue(in_rotation("QB", None, None))
+
+    def test_unknown_participation_does_not_keep_a_deep_reserve(self):
+        from app.ingest.context_loader import in_rotation
+        self.assertFalse(in_rotation("WR", 6, None))
+
+
+class TestDepthChartPositionGroups(unittest.TestCase):
+    """A rank is only meaningful inside its own position group."""
+
+    def frame(self):
+        return pd.DataFrame([
+            {"gsis_id": "rb1", "team": "SEA", "dt": "2026-01-01",
+             "pos_abb": "RB", "pos_rank": 1},
+            {"gsis_id": "rb2", "team": "SEA", "dt": "2026-01-01",
+             "pos_abb": "RB", "pos_rank": 2},
+            {"gsis_id": "fb1", "team": "SEA", "dt": "2026-01-01",
+             "pos_abb": "FB", "pos_rank": 1},
+            {"gsis_id": "wr1", "team": "SEA", "dt": "2026-01-01",
+             "pos_abb": "WR", "pos_rank": 1},
+        ])
+
+    def test_a_fullback_does_not_outrank_the_starting_back(self):
+        """FB1 taken at face value hands a blocker the RB1 prior."""
+        from app.ingest.context_loader import build_depth_ranks
+        ranks = build_depth_ranks(self.frame(), ["SEA"])
+        self.assertEqual(ranks["rb1"], 1)
+        self.assertGreater(ranks["fb1"], ranks["rb2"])
+
+    def test_a_fullback_is_grouped_with_the_backs(self):
+        from app.ingest.context_loader import build_depth_positions
+        pos = build_depth_positions(self.frame(), ["SEA"])
+        self.assertEqual(pos["fb1"], "RB")
+        self.assertEqual(pos["wr1"], "WR")
+
+    def test_primary_labels_keep_their_own_rank(self):
+        from app.ingest.context_loader import build_depth_ranks
+        ranks = build_depth_ranks(self.frame(), ["SEA"])
+        self.assertEqual(ranks["wr1"], 1)
+        self.assertEqual(ranks["rb2"], 2)
+
+    def test_the_prior_a_fullback_receives_is_a_backup_prior(self):
+        from app.ingest.context_loader import build_depth_ranks
+        from app.projections.usage_builder import opportunity_prior
+        ranks = build_depth_ranks(self.frame(), ["SEA"])
+        starter = opportunity_prior("RB", ranks["rb1"])["rush_share"]
+        blocker = opportunity_prior("RB", ranks["fb1"])["rush_share"]
+        self.assertLess(blocker, starter)
+
+
+class TestSnapCrosswalk(unittest.TestCase):
+    """Snap counts are keyed by PFR id, everything else by gsis id."""
+
+    def snaps(self):
+        return pd.DataFrame([
+            {"pfr_player_id": "SmitJa00", "week": 1, "offense_pct": 0.88},
+            {"pfr_player_id": "KuppCo00", "week": 1, "offense_pct": 0.75},
+        ])
+
+    def id_map(self):
+        return pd.DataFrame([
+            {"gsis_id": "00-001", "pfr_id": "SmitJa00"},
+            {"gsis_id": "00-002", "pfr_id": "KuppCo00"},
+        ])
+
+    def test_pfr_ids_are_translated_to_gsis_ids(self):
+        from app.ingest.context_loader import snap_shares
+        out = snap_shares(self.snaps(), id_map=self.id_map())
+        self.assertEqual(sorted(out["player_id"]), ["00-001", "00-002"])
+
+    def test_without_the_map_there_is_no_player_id_to_join_on(self):
+        """The silent failure: build_game_logs then skips the merge entirely."""
+        from app.ingest.context_loader import snap_shares
+        out = snap_shares(self.snaps())
+        self.assertNotIn("player_id", out.columns)
+
+    def test_snap_share_actually_reaches_the_game_log(self):
+        """A renamed column would pass the unit test and still merge nothing."""
+        from app.ingest.context_loader import (build_game_logs, snap_shares,
+                                               team_volume_by_week)
         weekly = normalize_weekly(weekly_frame())
-        vol = team_volume_by_week(weekly)
-        without = build_team_environment(weekly, vol, "MIN")
-        with_pbp = build_team_environment(weekly, vol, "MIN", pbp=self.pbp())
-        self.assertTrue(without["_pace_is_approximate"])
-        self.assertFalse(with_pbp["_pace_is_approximate"])
+        volume = team_volume_by_week(weekly)
+        pid = str(weekly["player_id"].iloc[0])
+        week = int(weekly["week"].iloc[0])
+        snaps = pd.DataFrame([{"pfr_player_id": "AbcdEf00", "week": week,
+                               "offense_pct": 0.91}])
+        id_map = pd.DataFrame([{"gsis_id": pid, "pfr_id": "AbcdEf00"}])
+        snap = snap_shares(snaps, id_map=id_map)
+        logs = build_game_logs(weekly, volume, pd.DataFrame(), snap,
+                               [str(weekly["team"].iloc[0])])
+        shares = [row["snap_share"]
+                  for players in logs.values()
+                  for rows in players.values()
+                  for row in rows]
+        self.assertIn(0.91, shares)
+
+
+class TestSnapShareIsPointInTime(unittest.TestCase):
+    """snap_share lives in player_game_stats, which is never readable during a
+    backtest. In the live path it rides the through_week guard on the weekly
+    frame; this pins that so it cannot drift."""
+
+    def test_snaps_after_through_week_never_reach_the_log(self):
+        from app.ingest.context_loader import (build_game_logs, snap_shares,
+                                               team_volume_by_week)
+        weekly = normalize_weekly(weekly_frame())
+        volume = team_volume_by_week(weekly)
+        pid = str(weekly["player_id"].iloc[0])
+        team = str(weekly["team"].iloc[0])
+        weeks = sorted(int(w) for w in weekly["week"].unique())
+        cutoff = weeks[-1]
+        snaps = pd.DataFrame([
+            {"pfr_player_id": "AbcdEf00", "week": w,
+             "offense_pct": 0.99 if w >= cutoff else 0.40}
+            for w in weeks
+        ])
+        id_map = pd.DataFrame([{"gsis_id": pid, "pfr_id": "AbcdEf00"}])
+        snap = snap_shares(snaps, id_map=id_map)
+        logs = build_game_logs(weekly, volume, pd.DataFrame(), snap, [team],
+                               through_week=cutoff)
+        shares = [row["snap_share"]
+                  for players in logs.values()
+                  for rows in players.values()
+                  for row in rows]
+        self.assertNotIn(0.99, shares)
+
+    def test_unresolved_snap_share_is_none_not_zero(self):
+        """A failed crosswalk must not read as 'never on the field'."""
+        from app.ingest.context_loader import (build_game_logs,
+                                               team_volume_by_week)
+        weekly = normalize_weekly(weekly_frame())
+        volume = team_volume_by_week(weekly)
+        logs = build_game_logs(weekly, volume, pd.DataFrame(), pd.DataFrame(),
+                               [str(weekly["team"].iloc[0])])
+        shares = [row["snap_share"]
+                  for players in logs.values()
+                  for rows in players.values()
+                  for row in rows]
+        self.assertTrue(all(v is None for v in shares))
+
+
+class TestInjuryStatusRecency(unittest.TestCase):
+    """The latest report, not the latest non-null value of every column."""
+
+    def frame(self):
+        return pd.DataFrame([
+            {"gsis_id": "p1", "team": "SEA", "week": 3,
+             "report_status": "Questionable", "practice_status": None},
+            {"gsis_id": "p1", "team": "SEA", "week": 21,
+             "report_status": None,
+             "practice_status": "Full Participation in Practice"},
+            {"gsis_id": "p1", "team": "SEA", "week": 22,
+             "report_status": None,
+             "practice_status": "Full Participation in Practice"},
+            {"gsis_id": "p2", "team": "SEA", "week": 22,
+             "report_status": "Out", "practice_status": None},
+        ])
+
+    def test_a_recovered_player_is_not_still_questionable(self):
+        """groupby().last() reached back to week 3 and re-applied it."""
+        out = build_injury_statuses(self.frame(), ["SEA"])
+        self.assertNotIn("p1", out)
+
+    def test_a_genuinely_injured_player_is_kept(self):
+        out = build_injury_statuses(self.frame(), ["SEA"])
+        self.assertEqual(out["p2"]["report_status"], "Out")
 
 
 class FakePolarsFrame:

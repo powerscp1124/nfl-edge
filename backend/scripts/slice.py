@@ -49,33 +49,25 @@ from app.core.edge import (  # noqa: E402
     evaluate_prop,
     rank_edges,
 )
-from app.core.odds import BookQuote, format_american  # noqa: E402
+from app.core.odds import format_american  # noqa: E402
 from app.ingest.odds_api import normalize_event_props  # noqa: E402
 from app.ingest.player_matching import (  # noqa: E402
     PlayerResolver,
+    is_non_player_market,
+    normalize_name,
     RosterEntry,
     match_rate,
 )
-from app.projections.environment import (  # noqa: E402
-    GameEnvironment,
-    TeamEnvironment,
-    WeatherState,
+from app.projections.pipeline import (  # noqa: E402
+    anchored_distribution,
+    MARKET_LABELS,
+    build_environment,
+    build_rosters,
+    group_quotes,
 )
-from app.projections.injury_engine import RoleProfile, propagate_injuries  # noqa: E402
-from app.projections.usage_builder import (  # noqa: E402
-    build_player_usage,
-    flag_role_changes,
-    normalize_team_shares,
-)
-from app.sim.game_sim import TeamRoster, simulate_game  # noqa: E402
+from app.sim.game_sim import simulate_game  # noqa: E402
 
 FIXTURE_DIR = Path(__file__).resolve().parents[1] / "tests" / "fixtures"
-
-MARKET_LABELS = {
-    "passing_yards": "Pass Yds",
-    "rushing_yards": "Rush Yds",
-    "receiving_yards": "Rec Yds",
-}
 
 DISCLAIMER = (
     "Projections are probabilistic estimates with real uncertainty. "
@@ -120,75 +112,6 @@ def load_context(args) -> dict:
 
 
 # --------------------------------------------------------------------------- #
-def build_rosters(context: dict, resolver: PlayerResolver):
-    """Build both teams' PlayerUsage from game logs, then apply injuries."""
-    from app.projections.usage_builder import PlayerGameLog
-
-    rosters, all_notes, role_changes = {}, [], {}
-
-    for team, players in context["game_logs"].items():
-        usages, roles, statuses = [], {}, {}
-        for pid, logs_raw in players.items():
-            logs = [PlayerGameLog(**row) for row in logs_raw]
-            built = build_player_usage(
-                logs, depth_rank=context["depth_rank"].get(pid, 3))
-            usage = built.usage
-            if usage.position == "QB" and pid == context["starting_qb"][team]:
-                usage = type(usage)(**{**vars(usage), "is_starting_qb": True})
-            usages.append(usage)
-            all_notes.extend(f"{usage.name}: {n}" for n in built.notes)
-
-            change = flag_role_changes(logs)
-            if change:
-                role_changes[pid] = change
-
-            roles[pid] = RoleProfile(
-                player_id=pid,
-                position=usage.position,
-                depth_rank=context["depth_rank"].get(pid, 3),
-                slot_rate=context["slot_rate"].get(pid, 0.3),
-                adot=usage.adot,
-            )
-            if pid in context["injuries"]:
-                statuses[pid] = context["injuries"][pid]
-
-        usages = normalize_team_shares(usages)
-        result = propagate_injuries(usages, roles, statuses)
-        env = TeamEnvironment(team=team, **context["team_env"][team])
-        rosters[team] = (TeamRoster(env=env, players=result.usages), result)
-
-    return rosters, all_notes, role_changes
-
-
-def build_environment(context: dict, rosters) -> GameEnvironment:
-    home, away = context["home_team"], context["away_team"]
-    weather = WeatherState(**context["weather"])
-    return GameEnvironment(
-        game_id=context["game_id"],
-        home=rosters[home][0].env,
-        away=rosters[away][0].env,
-        spread_home=context["spread_home"],
-        total=context["total"],
-        weather=weather,
-    )
-
-
-def group_quotes(quotes, resolved: dict[str, str]):
-    """Bucket normalised odds rows by (player_id, stat, side)."""
-    grouped = defaultdict(list)
-    for q in quotes:
-        pid = resolved.get(q.player_name)
-        if pid is None or q.is_alternate:
-            continue
-        if q.stat not in MARKET_LABELS:
-            continue
-        side = "over" if q.side.startswith("o") else "under"
-        grouped[(pid, q.stat, side)].append(
-            BookQuote(bookmaker=q.bookmaker, line=q.line, american=q.american)
-        )
-    return grouped
-
-
 # --------------------------------------------------------------------------- #
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
@@ -201,6 +124,9 @@ def main() -> int:
     parser.add_argument(
         "--through-week", type=int, default=None,
         help="Backtest guard: use only data from before this week.")
+    parser.add_argument("--no-anchor", action="store_true",
+                        help="project from the model alone, "
+                             "ignoring the market line")
     args = parser.parse_args()
 
     if not args.fixture and not args.event_id:
@@ -216,21 +142,48 @@ def main() -> int:
     roster = [RosterEntry(**r) for r in context["roster"]]
     resolver = PlayerResolver(roster)
     team_of = {r.full_name: r.team for r in roster}
-    names = {(q.player_name, None) for q in quotes}
+    market_names = {q.player_name for q in quotes}
+    team_markets = {n for n in market_names if is_non_player_market(n)}
+    names = {(n, None) for n in market_names - team_markets}
     resolved, unresolved = resolver.resolve_many(names)
+
+    # A resolved player with no game log is a data gap, not a matching
+    # failure. Counting the two together hides both.
+    with_history = {pid for team in context["game_logs"].values()
+                    for pid in team}
+    no_history = {n: pid for n, pid in resolved.items()
+                  if pid not in with_history}
 
     rate = match_rate(resolved, unresolved)
     print(f"Player resolution: {len(resolved)}/{len(names)} matched "
           f"({rate:.1%})")
+    if team_markets:
+        print(f"  {len(team_markets)} team/novelty market(s) skipped: "
+              f"{', '.join(sorted(team_markets)[:3])}"
+              f"{' ...' if len(team_markets) > 3 else ''}")
+    if no_history:
+        print(f"  {len(no_history)} matched but have no game log this season "
+              f"(cannot be projected): {', '.join(sorted(no_history)[:4])}"
+              f"{' ...' if len(no_history) > 4 else ''}")
+    league = context.get("league_players", {})
+    churn, missing = [], []
     for u in unresolved:
+        elsewhere = league.get(normalize_name(u.raw_name))
+        (churn if elsewhere else missing).append((u, elsewhere))
+    for u, elsewhere in churn:
+        print(f"  ROSTER CHANGE  {u.raw_name:24} played for {elsewhere} in "
+              "this season's data; not on either roster here")
+    for u, _ in missing:
         print(f"  UNRESOLVED  {u.raw_name:24} [{u.method}] "
-              f"candidates={u.candidates[:2]}")
+              f"not in this season's data at all "
+              f"(candidates={[c.split(' (')[0] for c in u.candidates[:2]]})")
     if rate < 0.90:
         print("  ! Match rate below 90%. Fix the resolver before trusting "
               "any edge on this slate.")
 
     # --- 2. Rosters, injuries, environment ------------------------------- #
-    rosters, notes, role_changes = build_rosters(context, resolver)
+    rosters, notes, role_changes = build_rosters(
+        context, resolver, market_players=frozenset(resolved.values()))
     env = build_environment(context, rosters)
     home, away = context["home_team"], context["away_team"]
 
@@ -282,6 +235,10 @@ def main() -> int:
             dist = sim.distribution(pid, stat)
         except KeyError:
             continue
+        if not args.no_anchor:
+            # The projection is the market line unless something argues
+            # otherwise; see app/projections/anchor.py for why.
+            dist = anchored_distribution(dist, over, under)
 
         team = team_by_id.get(pid, home)
         opponent = away if team == home else home

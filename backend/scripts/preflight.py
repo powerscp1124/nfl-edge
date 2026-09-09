@@ -179,7 +179,8 @@ def check_schema(frames: dict) -> bool:
     time the real column names are compared against what those transformations
     assume.
     """
-    from app.ingest.context_loader import WEEKLY_COLUMNS
+    from app.ingest.context_loader import (DEPTH_RANK_COLUMNS,
+                                           WEEKLY_COLUMNS)
 
     ok = True
     weekly = frames.get("weekly")
@@ -193,7 +194,9 @@ def check_schema(frames: dict) -> bool:
         else:
             record(PASS, "schema weekly required")
 
-        absent = [c for c in WEEKLY_COLUMNS if c not in weekly.columns]
+        absent = [src for src, dest in WEEKLY_COLUMNS.items()
+                  if src not in weekly.columns
+                  and dest not in weekly.columns]
         if absent:
             record(WARN, "schema weekly optional",
                    f"not present, will default to zero: {absent}\n"
@@ -223,9 +226,8 @@ def check_schema(frames: dict) -> bool:
 
     depth = frames.get("depth charts")
     if depth is not None and len(depth):
-        rank_col = next((c for c in ("depth_team", "depth_rank",
-                                     "depth_position") if c in depth.columns),
-                        None)
+        rank_col = next((c for c in DEPTH_RANK_COLUMNS
+                         if c in depth.columns), None)
         if rank_col is None:
             record(WARN, "schema depth rank",
                    f"no recognised rank column in {sorted(depth.columns)[:12]}"
@@ -253,10 +255,13 @@ def check_teams(frames: dict) -> bool:
     from app.ingest.teams import canonical_team
 
     ok = True
-    for label, column in (("weekly", "recent_team"),
-                          ("play-by-play", "posteam")):
+    for label, candidates in (("weekly", ("team", "recent_team")),
+                              ("play-by-play", ("posteam",))):
         df = frames.get(label)
-        if df is None or column not in df.columns:
+        if df is None:
+            continue
+        column = next((c for c in candidates if c in df.columns), None)
+        if column is None:
             continue
         codes = {c for c in df[column].dropna().unique() if c}
         unmapped = [c for c in codes if canonical_team(c, strict=False) is None]

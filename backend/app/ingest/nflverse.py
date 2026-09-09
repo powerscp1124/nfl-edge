@@ -56,6 +56,9 @@ PBP_COLUMNS = [
     "passing_yards", "receiving_yards", "rushing_yards",
     "air_yards", "yards_after_catch", "complete_pass", "pass_touchdown",
     "rush_touchdown", "sack", "shotgun", "no_huddle", "pass_location",
+    # Pace is measured per drive: without these the gap between two
+    # snaps can span a change of possession.
+    "drive", "drive_time_of_possession",
 ]
 
 

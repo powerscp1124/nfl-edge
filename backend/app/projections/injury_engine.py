@@ -185,7 +185,11 @@ def propagate_injuries(
         if p_active <= 0.02:
             out_players.append(u)
         else:
-            active_players.append(replace(u, active_probability=p_active))
+            # Compose rather than replace: the usage builder has already
+            # recorded how often this player dresses at all, and an injury
+            # report is a second, independent reason he might not.
+            active_players.append(replace(
+                u, active_probability=float(p_active * u.active_probability)))
 
     if not active_players:
         return PropagationResult(list(usages), [], 0.0)

@@ -19,7 +19,7 @@ explanation layer has to be able to say which one moved.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Sequence
 
 import numpy as np
@@ -49,6 +49,22 @@ CARRY_CV = 1.65
 # positional prior.
 EFFICIENCY_PRIOR_WEIGHT = 4.0
 OPPORTUNITY_PRIOR_WEIGHT = 1.5
+# A skill player at or above this share of snaps is treated as holding his
+# listed role and carries the full depth-chart prior. Below it the prior is
+# scaled down, because a receiver on 5% of snaps is not a WR3 who happened to
+# be quiet -- he is not in the rotation. Giving him a WR3's prior share is not
+# harmless: every share pool is renormalised to 1.0 across the team, so prior
+# mass handed to players who do not play is taken directly from those who do.
+FULL_PARTICIPATION = 0.50
+# How many recent team games decide whether a player is currently playing.
+# Short, because the question is "is he in the line-up now", not "how much of
+# the season did he play" -- a rookie promoted three weeks ago is a starter,
+# and a veteran who has not dressed since October is not.
+AVAILABILITY_WINDOW = 4
+# Never assert a player is certainly absent. A blanket zero turns his line
+# into a guaranteed under, which is exactly the degenerate 100% projection the
+# review guard has to catch.
+MIN_AVAILABILITY = 0.05
 
 # Opportunity shares are shrunk toward a depth-chart baseline, not toward zero.
 # Shrinking toward zero applies the identical multiplicative factor
@@ -94,7 +110,9 @@ class PlayerGameLog:
     carries: float = 0.0
     rushing_yards: float = 0.0
     team_rush_attempts: float = 0.0
-    snap_share: float = 0.0
+    # None means the snap count did not resolve, which is not the same
+    # fact as a player who was on the field for none of them.
+    snap_share: float | None = None
     rz_carries: float = 0.0
     gl_carries: float = 0.0
     ez_targets: float = 0.0
@@ -126,6 +144,17 @@ def _shrunk_mean(
     return num / den, int(arr.size)
 
 
+def _prior_fraction(n_values: int, prior_weight: float,
+                    half_life: float) -> float:
+    """Share of a shrunk estimate contributed by the prior rather than data."""
+    if prior_weight <= 0:
+        return 0.0
+    if n_values <= 0:
+        return 1.0
+    evidence = float(_weights(n_values, half_life).sum())
+    return prior_weight / (evidence + prior_weight)
+
+
 def _safe_ratio(num: Sequence[float], den: Sequence[float]) -> list[float]:
     out = []
     for n, d in zip(num, den):
@@ -139,6 +168,30 @@ class UsageBuildResult:
     n_games: int
     sufficient: bool
     notes: list[str]
+    # How much of each opportunity share came from the depth-chart prior
+    # rather than from anything this player was observed doing. Consumed by
+    # ``normalize_team_shares`` so that mass invented by priors is what gets
+    # removed when the pool overshoots 1.0.
+    prior_mass: dict[str, float] = field(default_factory=dict)
+
+
+def roster_prior_scale(entries: Sequence[tuple[str, int]]) -> float:
+    """How much to shrink every depth-chart prior so the roster's sum to 1.0.
+
+    ``OPPORTUNITY_PRIORS`` says what a WR1 or a WR3 typically commands. Those
+    numbers are per-player and were never meant to be summed, but a projection
+    does sum them: sixteen players each pulled toward a plausible individual
+    share produce a team that throws 150% of its passes. Renormalising the
+    blended estimates afterwards is too late, because by then the invented
+    mass is indistinguishable from the real usage it is mixed with, and the
+    correction lands on everyone alike.
+
+    So scale the priors *before* they are blended, by the amount the roster
+    overshoots. Returns 1.0 when the priors already fit inside one team.
+    """
+    total = sum(opportunity_prior(pos, rank)["target_share"]
+                for pos, rank in entries)
+    return 1.0 if total <= 1.0 else 1.0 / total
 
 
 def build_player_usage(
@@ -147,6 +200,8 @@ def build_player_usage(
     depth_rank: int = 1,
     min_games: int = 3,
     half_life: float = 4.0,
+    prior_scale: float = 1.0,
+    team_weeks: Sequence[int] | None = None,
 ) -> UsageBuildResult:
     """Turn a player's game logs into a projected role.
 
@@ -161,24 +216,60 @@ def build_player_usage(
 
     logs = sorted(logs, key=lambda x: x.week)
     latest = logs[-1]
+
+    # Availability: in how many of the team's recent games did this player
+    # actually appear? Opportunity is renormalised across whoever is on the
+    # field, so a player carried at full availability who does not dress takes
+    # his whole share out of the game. Measured over the 2025 season that was
+    # 20% of a team's targets landing on players who never took the field,
+    # which is most of why projections came in low.
+    availability = 1.0
+    if team_weeks:
+        recent = sorted({int(w) for w in team_weeks})[-AVAILABILITY_WINDOW:]
+        if recent:
+            # Weighted toward the most recent game. Whether a player dressed
+            # last week says far more about Sunday than whether he dressed a
+            # month ago, and an unweighted rate leaves a returning starter and
+            # a fading one looking identical.
+            appeared = {g.week for g in logs}
+            weights = np.arange(1, len(recent) + 1, dtype=float)
+            hit = np.array([1.0 if w in appeared else 0.0 for w in recent])
+            availability = max(float((hit * weights).sum() / weights.sum()),
+                               MIN_AVAILABILITY)
     position = latest.position
     prior = POSITION_PRIORS.get(position, POSITION_PRIORS["WR"])
     opp_prior = opportunity_prior(position, depth_rank)
+    if prior_scale != 1.0:
+        opp_prior = {k: v * prior_scale for k, v in opp_prior.items()}
     notes: list[str] = []
+
+    # Participation is computed first, because it decides how much
+    # depth-chart prior the opportunity shares below are allowed to carry.
+    snap_share, _ = _shrunk_mean(
+        [g.snap_share for g in logs], prior=0.55,
+        prior_weight=OPPORTUNITY_PRIOR_WEIGHT, half_life=half_life)
+    # Observed snaps only, with no prior: the question here is "was this
+    # player in the rotation", and shrinking that toward an average player's
+    # 0.55 would answer "probably" for someone who was never on the field.
+    # Rows whose snap count did not resolve are None and drop out, so an
+    # unresolved player keeps the full prior rather than being deleted.
+    observed_snaps, n_snap = _shrunk_mean(
+        [g.snap_share for g in logs], prior=0.0, prior_weight=0.0,
+        half_life=half_life)
+    participation = (float(np.clip(observed_snaps / FULL_PARTICIPATION, 0.0, 1.0))
+                     if n_snap else 1.0)
+    opp_weight = OPPORTUNITY_PRIOR_WEIGHT * participation
 
     target_share, n_tgt = _shrunk_mean(
         _safe_ratio([g.targets for g in logs],
                     [g.team_pass_attempts for g in logs]),
         prior=opp_prior["target_share"],
-        prior_weight=OPPORTUNITY_PRIOR_WEIGHT, half_life=half_life)
+        prior_weight=opp_weight, half_life=half_life)
     rush_share, _ = _shrunk_mean(
         _safe_ratio([g.carries for g in logs],
                     [g.team_rush_attempts for g in logs]),
         prior=opp_prior["rush_share"],
-        prior_weight=OPPORTUNITY_PRIOR_WEIGHT, half_life=half_life)
-    snap_share, _ = _shrunk_mean(
-        [g.snap_share for g in logs], prior=0.55,
-        prior_weight=OPPORTUNITY_PRIOR_WEIGHT, half_life=half_life)
+        prior_weight=opp_weight, half_life=half_life)
 
     catch_rate, n_catch = _shrunk_mean(
         _safe_ratio([g.receptions for g in logs], [g.targets for g in logs]),
@@ -202,12 +293,12 @@ def build_player_usage(
         _safe_ratio([g.gl_carries for g in logs],
                     [g.team_gl_carries for g in logs]),
         prior=opp_prior["rush_share"] * 0.8,
-        prior_weight=OPPORTUNITY_PRIOR_WEIGHT, half_life=half_life)
+        prior_weight=opp_weight, half_life=half_life)
     ez_share, _ = _shrunk_mean(
         _safe_ratio([g.ez_targets for g in logs],
                     [g.team_ez_targets for g in logs]),
         prior=opp_prior["target_share"],
-        prior_weight=OPPORTUNITY_PRIOR_WEIGHT, half_life=half_life)
+        prior_weight=opp_weight, half_life=half_life)
 
     n_games = len(logs)
     if n_games < min_games:
@@ -235,24 +326,49 @@ def build_player_usage(
         carry_yards_cv=CARRY_CV,
         goal_line_share=float(np.clip(gl_share, 0.0, 1.0)),
         end_zone_target_share=float(np.clip(ez_share, 0.0, 1.0)),
+        active_probability=float(np.clip(availability, 0.0, 1.0)),
         is_starting_qb=False,
     )
+    prior_fraction = _prior_fraction(n_tgt, opp_weight, half_life)
+    rush_fraction = _prior_fraction(n_carry, opp_weight, half_life)
     return UsageBuildResult(
         usage=usage,
         n_games=n_games,
         sufficient=n_games >= min_games,
         notes=notes,
+        prior_mass={
+            "target_share": usage.target_share * prior_fraction,
+            "rush_share": usage.rush_share * rush_fraction,
+            "goal_line_share": usage.goal_line_share * rush_fraction,
+            "end_zone_target_share": (usage.end_zone_target_share
+                                      * prior_fraction),
+        },
     )
 
 
-def normalize_team_shares(usages: Sequence[PlayerUsage]) -> list[PlayerUsage]:
+def normalize_team_shares(
+    usages: Sequence[PlayerUsage],
+    prior_mass: Sequence[dict[str, float]] | None = None,
+) -> list[PlayerUsage]:
     """Force each share pool to sum to 1.0 across the team.
 
-    Individually estimated shares will not sum to one — shrinkage alone
-    guarantees they undershoot. Renormalising here means the simulator's
-    completeness check is meaningful: it will still catch a roster that is
-    genuinely missing players, because the shares of who *is* present get
-    inflated in a way the per-player estimates would not explain.
+    Individually estimated shares do not sum to one. Which direction they miss
+    in depends on the roster: with every player shrunk toward a depth-chart
+    prior, a roster carrying a long tail of fringe players *overshoots*,
+    because each of them is pulled up toward a prior share he has not earned.
+
+    Scaling everyone down by a common factor to correct that is the wrong
+    correction. It taxes a starter with seven games of consistent usage
+    exactly as hard as a receiver with one appearance, even though the excess
+    was created entirely by the second. On a live slate that cost the WR1
+    about nine points of target share.
+
+    So when ``prior_mass`` is supplied — how much of each player's share came
+    from the prior rather than from observed usage — the overshoot is taken
+    out of that prior mass first, in proportion to it, and only spills over
+    into observed usage if the priors cannot absorb it. Without it the old
+    proportional behaviour is kept, so callers that have no decomposition
+    still work.
     """
     from dataclasses import replace
 
@@ -267,9 +383,34 @@ def normalize_team_shares(usages: Sequence[PlayerUsage]) -> list[PlayerUsage]:
         total = sum(getattr(out[i], attr) for i in idxs)
         if total <= 0:
             continue
-        for i in idxs:
-            out[i] = replace(out[i],
-                             **{attr: getattr(out[i], attr) / total})
+
+        excess = total - 1.0
+        absorbed = False
+        if prior_mass is not None and excess > 1e-12:
+            # Never claim to remove more prior mass than the player's share.
+            available = {i: min(float(prior_mass[i].get(attr, 0.0)),
+                                getattr(out[i], attr)) for i in idxs}
+            pool = sum(available.values())
+            if pool >= excess:
+                for i in idxs:
+                    share = getattr(out[i], attr)
+                    cut = excess * (available[i] / pool) if pool else 0.0
+                    out[i] = replace(out[i], **{attr: max(share - cut, 0.0)})
+                absorbed = True
+            elif pool > 0:
+                # Strip the priors entirely, then scale what observation left.
+                for i in idxs:
+                    share = getattr(out[i], attr)
+                    out[i] = replace(out[i],
+                                     **{attr: max(share - available[i], 0.0)})
+                total = sum(getattr(out[i], attr) for i in idxs)
+                if total <= 0:
+                    continue
+
+        if not absorbed:
+            for i in idxs:
+                out[i] = replace(out[i],
+                                 **{attr: getattr(out[i], attr) / total})
     return out
 
 

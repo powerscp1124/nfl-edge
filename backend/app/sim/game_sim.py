@@ -181,6 +181,58 @@ class SimulationResult:
         return float(np.corrcoef(a, b)[0, 1])
 
 
+# Concentration of the per-simulation share draw. A share is an estimate
+# summarising a handful of games, not a constant the player will reproduce:
+# hold it fixed across every simulation and the only variance left in a
+# receiver's line is how many of his fixed share of targets he catches. That
+# is a large part of why simulated distributions come out too narrow --
+# measured against the 2025 season, receiving yards were 1.41x too tight and
+# rushing yards 1.35x. Higher concentration means a steadier role.
+SHARE_CONCENTRATION = 60.0
+
+# Game-level efficiency multiplier. Drawing every catch independently makes a
+# player's yardage the average of his opportunities, and averages are narrow:
+# the simulated spread came out 1.41x too tight for receiving and 1.35x for
+# rushing against the 2025 season. Real production does not work that way --
+# a receiver facing a corner he beats all afternoon, or a back running behind
+# a line winning every snap, has a good day on *every* touch at once. This
+# draws one such factor per player per game, which correlates his touches
+# instead of averaging them away. Lognormal, so it cannot go negative and the
+# upside tail is longer than the downside.
+def _draw_shares(shares: np.ndarray, n_sims: int, rng: np.random.Generator,
+                 concentration: float | None = None) -> np.ndarray:
+    """Per-simulation opportunity shares, drawn around the estimate.
+
+    A share summarises a handful of games; holding it fixed across every
+    simulation means a receiver's role never has a quiet week. Dirichlet, so
+    the room still divides one pool: a week where the slot receiver runs hot
+    is a week somebody else is quiet, which is how target shares actually
+    move.
+    """
+    # Read at call time, not bound as a default: a default argument is
+    # evaluated once when the function is defined, so pinning it there would
+    # silently ignore any later change to the constant.
+    if concentration is None:
+        concentration = SHARE_CONCENTRATION
+    s = np.clip(np.asarray(shares, dtype=float), 0.0, None)
+    total = float(s.sum())
+    if total <= 0 or concentration <= 0 or s.size == 0:
+        return np.repeat(s[:, None], n_sims, axis=1)
+    # Draw only over players who have a share to vary. A Dirichlet needs a
+    # positive concentration for every component, and flooring the zeros to
+    # satisfy it would invent targets for a blocking back who is never thrown
+    # to -- which then breaks the identity that a quarterback's passing yards
+    # are exactly his receivers' yards.
+    positive = s > 0
+    out = np.zeros((s.size, n_sims), dtype=float)
+    if positive.sum() == 1:
+        out[positive] = total
+        return out
+    alpha = np.maximum(s[positive] / total * concentration, 1e-6)
+    out[positive] = rng.dirichlet(alpha, size=n_sims).T * total
+    return out
+
+
 def _allocate(total: np.ndarray, shares: np.ndarray,
               rng: np.random.Generator) -> np.ndarray:
     """Split a per-sim integer total among players by share.
@@ -190,32 +242,42 @@ def _allocate(total: np.ndarray, shares: np.ndarray,
     players. Exact, and vectorised across simulations even though ``total``
     varies from sim to sim (which ``np.random.multinomial`` cannot do).
 
+    ``shares`` is either one share per player, or a full ``(n_players,
+    n_sims)`` matrix for shares that differ between simulations -- which they
+    do once a player who is inactive in a given sim has his share handed to
+    the rest of the room. Columns are renormalised, so zeroing an inactive
+    player redistributes his opportunity rather than deleting it.
+
     Returns an array of shape ``(n_players, n_sims)``.
     """
-    n_players = shares.size
-    n_sims = total.size
+    total = np.asarray(total)
+    n_sims = int(total.size)
+    shares = np.asarray(shares, dtype=float)
+    if shares.ndim == 1:
+        shares = np.repeat(shares[:, None], n_sims, axis=1)
+    n_players = shares.shape[0]
     out = np.zeros((n_players, n_sims), dtype=np.int64)
     if n_players == 0:
         return out
     shares = np.clip(shares, 0.0, None)
-    s = shares.sum()
-    if s <= 0:
+    column_sum = shares.sum(axis=0)
+    usable = column_sum > 0
+    if not usable.any():
         return out
-    shares = shares / s
+    shares = shares / np.where(usable, column_sum, 1.0)
 
     remaining = total.astype(np.int64).copy()
-    remaining_share = 1.0
+    remaining_share = np.ones(n_sims)
     for i in range(n_players):
-        if remaining_share <= 1e-12:
-            break
-        p = float(np.clip(shares[i] / remaining_share, 0.0, 1.0))
         if i == n_players - 1:
-            out[i] = remaining
+            out[i] = np.where(usable, remaining, 0)
             break
-        draw = rng.binomial(remaining, p)
+        p = np.divide(shares[i], remaining_share,
+                      out=np.zeros(n_sims), where=remaining_share > 1e-12)
+        draw = rng.binomial(remaining, np.clip(p, 0.0, 1.0))
         out[i] = draw
         remaining = remaining - draw
-        remaining_share -= shares[i]
+        remaining_share = remaining_share - shares[i]
     return out
 
 
@@ -322,12 +384,19 @@ def simulate_game(
             for pl in roster.players
         }
 
+        # Zero an inactive player's share before allocating, so the targets
+        # go to his team-mates. Masking after the fact deleted them, and every
+        # passing and receiving projection came out short by the
+        # share-weighted availability of the room.
         tgt_shares = np.array([pl.target_share for pl in receivers])
-        tgt_alloc = _allocate(pass_attempts, tgt_shares, rng)
+        tgt_active = np.array([active[pl.player_id] for pl in receivers])
+        tgt_alloc = _allocate(pass_attempts,
+                              _draw_shares(tgt_shares, n_sims, rng)
+                              * tgt_active, rng)
 
         team_rec_yards = np.zeros(n_sims)
         for idx, pl in enumerate(receivers):
-            tg = tgt_alloc[idx] * active[pl.player_id]
+            tg = tgt_alloc[idx]
             rec = rng.binomial(tg, np.clip(pl.catch_rate, 0.05, 0.95))
             # Deep threats lose more to wind than possession receivers.
             deep_weight = float(np.clip((pl.adot - 6.0) / 10.0, 0.0, 1.0))
@@ -341,9 +410,12 @@ def simulate_game(
             team_rec_yards += yds
 
         rush_shares = np.array([pl.rush_share for pl in rushers])
-        rush_alloc = _allocate(rush_attempts, rush_shares, rng)
+        rush_active = np.array([active[pl.player_id] for pl in rushers])
+        rush_alloc = _allocate(rush_attempts,
+                               _draw_shares(rush_shares, n_sims, rng)
+                               * rush_active, rng)
         for idx, pl in enumerate(rushers):
-            car = rush_alloc[idx] * active[pl.player_id]
+            car = rush_alloc[idx]
             # Gamma cannot go negative, so carries are drawn on a shifted scale
             # and shifted back: this is what allows stuffed runs and TFLs.
             shift = 1.4

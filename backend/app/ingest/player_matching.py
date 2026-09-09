@@ -241,6 +241,27 @@ class PlayerResolver:
         return resolved, unresolved
 
 
+# Books price things that are not players: a team defence, and the "no
+# touchdown scorer" line. Fuzzy-matching those against a roster is not merely
+# useless, it is actively misleading -- it offers a running back as a
+# candidate for a defence, and it counts against the match rate that is meant
+# to measure whether player names are being matched correctly.
+NON_PLAYER_MARKET_TOKENS = ("no scorer", "no touchdown", "any other",
+                            "field goal", "d/st", "defense", "defence",
+                            "special teams")
+
+
+def is_non_player_market(name: str) -> bool:
+    """Whether a market's 'player' is not a player at all."""
+    from .teams import canonical_team
+    if not name or not name.strip():
+        return True
+    lowered = name.strip().lower()
+    if any(token in lowered for token in NON_PLAYER_MARKET_TOKENS):
+        return True
+    return canonical_team(name, strict=False) is not None
+
+
 def match_rate(resolved: dict, unresolved: Sequence) -> float:
     total = len(resolved) + len(unresolved)
     return len(resolved) / total if total else 0.0

@@ -212,6 +212,22 @@ class OddsAPIClient:
             },
         )
 
+    def historical_events(self, snapshot_iso: str) -> list[dict]:
+        """The slate as it stood at a past timestamp.
+
+        Needed to turn a historical game into the event id the props endpoint
+        wants. Cheap for the same reason ``list_events`` is: no odds cross the
+        wire, only the fixture list.
+        """
+        payload = self._get(
+            f"/historical/sports/{SPORT}/events",
+            {"date": snapshot_iso},
+        )
+        # The historical envelope wraps the slate in a "data" key.
+        if isinstance(payload, dict):
+            return payload.get("data", []) or []
+        return payload or []
+
     def historical_event_props(
         self,
         event_id: str,

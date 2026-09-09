@@ -14,7 +14,8 @@ from app.projections.environment import (
     TeamEnvironment,
     WeatherState,
 )
-from app.sim.game_sim import PlayerUsage, TeamRoster, simulate_game
+from app.sim.game_sim import (PlayerUsage, TeamRoster, _allocate,
+                              simulate_game)
 
 
 def build_game(spread_home=-3.5, total=47.5, weather=None, seed=11, n_sims=8000):
@@ -395,3 +396,117 @@ class TestTouchdownCalibration(unittest.TestCase):
         """A receiver with no goal-line role still scores on long plays."""
         td = self.sim.touchdown_probabilities("kc-wr1")
         self.assertGreater(td["anytime"], 0.10)
+
+
+class TestOpportunityIsRedistributed(unittest.TestCase):
+    """An absent player's opportunity must go to his team-mates, not vanish."""
+
+    def test_allocation_conserves_the_total(self):
+        rng = np.random.default_rng(3)
+        total = rng.integers(20, 40, size=500)
+        shares = np.array([0.4, 0.3, 0.2, 0.1])
+        out = _allocate(total, shares, rng)
+        np.testing.assert_array_equal(out.sum(axis=0), total)
+
+    def test_inactive_player_share_goes_to_teammates(self):
+        """Zeroing a share must not shrink the team total."""
+        rng = np.random.default_rng(5)
+        n = 400
+        total = np.full(n, 30)
+        shares = np.array([0.4, 0.3, 0.2, 0.1])
+        active = np.ones((4, n), dtype=bool)
+        active[0] = False                      # the 40% player sits
+        out = _allocate(total, shares[:, None] * active, rng)
+        np.testing.assert_array_equal(out.sum(axis=0), total)
+        self.assertEqual(out[0].sum(), 0)
+        # The other three now split the whole 30, not 60% of it.
+        self.assertAlmostEqual(out[1:].sum() / (30.0 * n), 1.0, places=6)
+
+    def test_masking_after_allocation_would_lose_opportunity(self):
+        """Guards the specific bug: multiplying the mask in afterwards."""
+        rng = np.random.default_rng(7)
+        n = 400
+        total = np.full(n, 30)
+        shares = np.array([0.4, 0.3, 0.2, 0.1])
+        active = np.ones((4, n), dtype=bool)
+        active[0] = False
+        masked_after = _allocate(total, shares, rng) * active
+        self.assertLess(masked_after.sum(), total.sum() * 0.75)
+
+
+class TestPlayVolumeIsOnTheRightScale(unittest.TestCase):
+    """The play model and the pace estimator must share a scale.
+
+    ``seconds_per_play`` measures neutral-situation drive pace (29.7-35.0
+    across the 2025 league). The reference it is differenced against has to be
+    on that same scale; when it was 27.5 every team read as several seconds
+    slow and lost roughly seven plays a game.
+    """
+
+    def env(self, pace):
+        from app.projections.environment import EnvironmentPriors
+        home = TeamEnvironment(team="KC", neutral_pass_rate=0.58,
+                               seconds_per_play=pace, red_zone_rush_rate=0.50)
+        away = TeamEnvironment(team="DEN", neutral_pass_rate=0.55,
+                               seconds_per_play=pace, red_zone_rush_rate=0.55)
+        return GameEnvironment(game_id="test", home=home, away=away,
+                               spread_home=-3.0,
+                               total=EnvironmentPriors().total_reference,
+                               weather=WeatherState())
+
+    def test_reference_pace_gives_a_league_average_play_count(self):
+        from app.projections.environment import EnvironmentPriors
+        p = EnvironmentPriors()
+        plays = self.env(p.seconds_per_play_reference).expected_plays(
+            self.env(p.seconds_per_play_reference).home)
+        self.assertAlmostEqual(plays, p.base_plays_per_team, places=6)
+        self.assertTrue(56.0 <= plays <= 64.0,
+                        f"league-average team simulated at {plays:.1f} plays")
+
+    def test_a_real_measured_pace_gives_a_plausible_play_count(self):
+        """SEA measured 32.7s in 2025 and ran 59.2 offensive plays a game."""
+        e = self.env(32.7)
+        plays = e.expected_plays(e.home)
+        self.assertTrue(55.0 <= plays <= 65.0,
+                        f"32.7s/play simulated at {plays:.1f} plays")
+
+    def test_the_whole_measured_pace_range_stays_plausible(self):
+        """No team should fall outside the real 55.4-66.1 span by much."""
+        for pace in (29.7, 32.4, 35.0):
+            e = self.env(pace)
+            plays = e.expected_plays(e.home)
+            self.assertTrue(53.0 <= plays <= 68.0,
+                            f"{pace}s/play simulated at {plays:.1f} plays")
+
+
+class TestShareDraw(unittest.TestCase):
+    """Shares vary between games; a player with no share still has none."""
+
+    def test_a_zero_share_player_is_never_handed_opportunity(self):
+        """Flooring a Dirichlet's zeros invents targets for a blocking back --
+        and breaks the identity that passing yards are the receivers' yards."""
+        import app.sim.game_sim as gs
+        rng = np.random.default_rng(4)
+        drawn = gs._draw_shares(np.array([0.5, 0.5, 0.0]), 500, rng)
+        self.assertTrue(np.all(drawn[2] == 0.0))
+
+    def test_the_draw_preserves_the_pool(self):
+        import app.sim.game_sim as gs
+        rng = np.random.default_rng(4)
+        shares = np.array([0.4, 0.35, 0.25])
+        drawn = gs._draw_shares(shares, 500, rng)
+        np.testing.assert_allclose(drawn.sum(axis=0), shares.sum(), rtol=1e-9)
+
+    def test_zero_concentration_keeps_shares_fixed(self):
+        import app.sim.game_sim as gs
+        rng = np.random.default_rng(4)
+        shares = np.array([0.4, 0.35, 0.25])
+        drawn = gs._draw_shares(shares, 50, rng, concentration=0.0)
+        for column in drawn.T:
+            np.testing.assert_allclose(column, shares)
+
+    def test_a_lone_claimant_takes_the_whole_pool(self):
+        import app.sim.game_sim as gs
+        rng = np.random.default_rng(4)
+        drawn = gs._draw_shares(np.array([0.0, 0.8, 0.0]), 50, rng)
+        np.testing.assert_allclose(drawn[1], 0.8)

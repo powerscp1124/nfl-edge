@@ -24,11 +24,25 @@ import numpy as np
 class EnvironmentPriors:
     """League-level relationships, refit each season from play-by-play."""
 
-    base_plays_per_team: float = 63.0
+    # Fitted against 2025 play-by-play, all 32 teams (2026-09-08). Before that
+    # these were round-number priors, and the reference in particular was on a
+    # different scale from what ``seconds_per_play`` actually measures: it
+    # returns neutral-situation drive pace, which runs 29.7-35.0 across the
+    # league, against a reference of 27.5. Every team therefore read as several
+    # seconds slow, and at 1.9 plays per second that cost ~7 plays a game --
+    # a league-average team was simulated at 53.6 plays against an actual 60.7.
+    base_plays_per_team: float = 60.7            # league mean offensive plays
     plays_per_point_of_total: float = 0.22       # higher totals -> more plays
     total_reference: float = 44.5
-    seconds_per_play_reference: float = 27.5
-    pace_play_sensitivity: float = 1.9           # plays gained per second faster
+    seconds_per_play_reference: float = 32.4     # league mean of the estimator
+    # Measured slope of plays on pace: 0.67 plays per second slower. Weakly
+    # identified (r = -0.30 over one season of 32 teams), and deliberately
+    # lower than the 1.9 it replaces: at 1.9 the model reproduced the real
+    # spread of team play counts but was no more accurate than predicting the
+    # league mean, so the extra spread was noise. Game-to-game variation comes
+    # from plays_sd and the trailing-team bonus, not from this. Refit it
+    # against more than one season before leaning on it.
+    pace_play_sensitivity: float = 0.67
     trailing_play_bonus: float = 0.28            # extra plays per point trailed
     league_neutral_pass_rate: float = 0.575
     pass_rate_per_point_trailed: float = 0.0125  # logit-space script response
