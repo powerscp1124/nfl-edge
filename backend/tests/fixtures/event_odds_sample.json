@@ -1,0 +1,849 @@
+{
+ "id": "fixture-event-1",
+ "sport_key": "americanfootball_nfl",
+ "commence_time": "2026-09-13T17:00:00Z",
+ "home_team": "Minnesota Vikings",
+ "away_team": "Green Bay Packers",
+ "bookmakers": [
+  {
+   "key": "draftkings",
+   "title": "Draftkings",
+   "markets": [
+    {
+     "key": "player_pass_yds",
+     "last_update": "2026-09-13T15:32:11Z",
+     "outcomes": [
+      {
+       "name": "Over",
+       "description": "J. Darnold",
+       "price": -105,
+       "point": 228.5
+      },
+      {
+       "name": "Under",
+       "description": "J. Darnold",
+       "price": -105,
+       "point": 228.5
+      },
+      {
+       "name": "Over",
+       "description": "J. Love",
+       "price": -105,
+       "point": 244.0
+      },
+      {
+       "name": "Under",
+       "description": "J. Love",
+       "price": -115,
+       "point": 244.0
+      }
+     ]
+    },
+    {
+     "key": "player_rush_yds",
+     "last_update": "2026-09-13T15:32:11Z",
+     "outcomes": [
+      {
+       "name": "Over",
+       "description": "A. Jones",
+       "price": -108,
+       "point": 63.5
+      },
+      {
+       "name": "Under",
+       "description": "A. Jones",
+       "price": -115,
+       "point": 63.5
+      },
+      {
+       "name": "Over",
+       "description": "J. Jacobs",
+       "price": -110,
+       "point": 72.0
+      },
+      {
+       "name": "Under",
+       "description": "J. Jacobs",
+       "price": -110,
+       "point": 72.0
+      },
+      {
+       "name": "Over",
+       "description": "T. Chandler",
+       "price": -105,
+       "point": 21.5
+      },
+      {
+       "name": "Under",
+       "description": "T. Chandler",
+       "price": -110,
+       "point": 21.5
+      }
+     ]
+    },
+    {
+     "key": "player_reception_yds",
+     "last_update": "2026-09-13T15:32:11Z",
+     "outcomes": [
+      {
+       "name": "Over",
+       "description": "J. Jefferson",
+       "price": -115,
+       "point": 84.0
+      },
+      {
+       "name": "Under",
+       "description": "J. Jefferson",
+       "price": -115,
+       "point": 84.0
+      },
+      {
+       "name": "Over",
+       "description": "J. Addison",
+       "price": -110,
+       "point": 52.5
+      },
+      {
+       "name": "Under",
+       "description": "J. Addison",
+       "price": -115,
+       "point": 52.5
+      },
+      {
+       "name": "Over",
+       "description": "T. Hockenson",
+       "price": -115,
+       "point": 48.5
+      },
+      {
+       "name": "Under",
+       "description": "T. Hockenson",
+       "price": -120,
+       "point": 48.5
+      },
+      {
+       "name": "Over",
+       "description": "J. Reed",
+       "price": 100,
+       "point": 58.5
+      },
+      {
+       "name": "Under",
+       "description": "J. Reed",
+       "price": -110,
+       "point": 58.5
+      },
+      {
+       "name": "Over",
+       "description": "R. Doubs",
+       "price": -105,
+       "point": 41.0
+      },
+      {
+       "name": "Under",
+       "description": "R. Doubs",
+       "price": -120,
+       "point": 41.0
+      },
+      {
+       "name": "Over",
+       "description": "T. Kraft",
+       "price": -108,
+       "point": 38.5
+      },
+      {
+       "name": "Under",
+       "description": "T. Kraft",
+       "price": -120,
+       "point": 38.5
+      },
+      {
+       "name": "Over",
+       "description": "J. Nailor",
+       "price": -115,
+       "point": 22.0
+      },
+      {
+       "name": "Under",
+       "description": "J. Nailor",
+       "price": -105,
+       "point": 22.0
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "key": "fanduel",
+   "title": "Fanduel",
+   "markets": [
+    {
+     "key": "player_pass_yds",
+     "last_update": "2026-09-13T15:32:11Z",
+     "outcomes": [
+      {
+       "name": "Over",
+       "description": "J. Darnold",
+       "price": -105,
+       "point": 228.5
+      },
+      {
+       "name": "Under",
+       "description": "J. Darnold",
+       "price": -115,
+       "point": 228.5
+      },
+      {
+       "name": "Over",
+       "description": "J. Love",
+       "price": -110,
+       "point": 244.0
+      },
+      {
+       "name": "Under",
+       "description": "J. Love",
+       "price": -105,
+       "point": 244.0
+      }
+     ]
+    },
+    {
+     "key": "player_rush_yds",
+     "last_update": "2026-09-13T15:32:11Z",
+     "outcomes": [
+      {
+       "name": "Over",
+       "description": "A. Jones",
+       "price": 100,
+       "point": 64.5
+      },
+      {
+       "name": "Under",
+       "description": "A. Jones",
+       "price": -115,
+       "point": 64.5
+      },
+      {
+       "name": "Over",
+       "description": "J. Jacobs",
+       "price": 100,
+       "point": 72.5
+      },
+      {
+       "name": "Under",
+       "description": "J. Jacobs",
+       "price": -120,
+       "point": 72.5
+      },
+      {
+       "name": "Over",
+       "description": "T. Chandler",
+       "price": -108,
+       "point": 21.5
+      },
+      {
+       "name": "Under",
+       "description": "T. Chandler",
+       "price": -110,
+       "point": 21.5
+      }
+     ]
+    },
+    {
+     "key": "player_reception_yds",
+     "last_update": "2026-09-13T15:32:11Z",
+     "outcomes": [
+      {
+       "name": "Over",
+       "description": "J. Jefferson",
+       "price": -108,
+       "point": 84.0
+      },
+      {
+       "name": "Under",
+       "description": "J. Jefferson",
+       "price": -110,
+       "point": 84.0
+      },
+      {
+       "name": "Over",
+       "description": "J. Addison",
+       "price": -108,
+       "point": 52.5
+      },
+      {
+       "name": "Under",
+       "description": "J. Addison",
+       "price": -115,
+       "point": 52.5
+      },
+      {
+       "name": "Over",
+       "description": "T. Hockenson",
+       "price": -110,
+       "point": 48.5
+      },
+      {
+       "name": "Under",
+       "description": "T. Hockenson",
+       "price": -115,
+       "point": 48.5
+      },
+      {
+       "name": "Over",
+       "description": "J. Reed",
+       "price": -110,
+       "point": 58.0
+      },
+      {
+       "name": "Under",
+       "description": "J. Reed",
+       "price": -115,
+       "point": 58.0
+      },
+      {
+       "name": "Over",
+       "description": "R. Doubs",
+       "price": 100,
+       "point": 41.5
+      },
+      {
+       "name": "Under",
+       "description": "R. Doubs",
+       "price": -115,
+       "point": 41.5
+      },
+      {
+       "name": "Over",
+       "description": "T. Kraft",
+       "price": -115,
+       "point": 39.5
+      },
+      {
+       "name": "Under",
+       "description": "T. Kraft",
+       "price": -105,
+       "point": 39.5
+      },
+      {
+       "name": "Over",
+       "description": "J. Nailor",
+       "price": -110,
+       "point": 22.5
+      },
+      {
+       "name": "Under",
+       "description": "J. Nailor",
+       "price": -115,
+       "point": 22.5
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "key": "betmgm",
+   "title": "Betmgm",
+   "markets": [
+    {
+     "key": "player_pass_yds",
+     "last_update": "2026-09-13T15:32:11Z",
+     "outcomes": [
+      {
+       "name": "Over",
+       "description": "J. Darnold",
+       "price": -115,
+       "point": 229.5
+      },
+      {
+       "name": "Under",
+       "description": "J. Darnold",
+       "price": -105,
+       "point": 229.5
+      },
+      {
+       "name": "Over",
+       "description": "J. Love",
+       "price": -115,
+       "point": 243.5
+      },
+      {
+       "name": "Under",
+       "description": "J. Love",
+       "price": -120,
+       "point": 243.5
+      }
+     ]
+    },
+    {
+     "key": "player_rush_yds",
+     "last_update": "2026-09-13T15:32:11Z",
+     "outcomes": [
+      {
+       "name": "Over",
+       "description": "A. Jones",
+       "price": -110,
+       "point": 64.5
+      },
+      {
+       "name": "Under",
+       "description": "A. Jones",
+       "price": -105,
+       "point": 64.5
+      },
+      {
+       "name": "Over",
+       "description": "J. Jacobs",
+       "price": -115,
+       "point": 71.5
+      },
+      {
+       "name": "Under",
+       "description": "J. Jacobs",
+       "price": -110,
+       "point": 71.5
+      },
+      {
+       "name": "Over",
+       "description": "T. Chandler",
+       "price": -115,
+       "point": 21.0
+      },
+      {
+       "name": "Under",
+       "description": "T. Chandler",
+       "price": -120,
+       "point": 21.0
+      }
+     ]
+    },
+    {
+     "key": "player_reception_yds",
+     "last_update": "2026-09-13T15:32:11Z",
+     "outcomes": [
+      {
+       "name": "Over",
+       "description": "Justin Jefferson",
+       "price": 100,
+       "point": 83.0
+      },
+      {
+       "name": "Under",
+       "description": "J. Jefferson",
+       "price": -115,
+       "point": 83.0
+      },
+      {
+       "name": "Over",
+       "description": "J. Addison",
+       "price": -108,
+       "point": 51.5
+      },
+      {
+       "name": "Under",
+       "description": "J. Addison",
+       "price": -115,
+       "point": 51.5
+      },
+      {
+       "name": "Over",
+       "description": "T. Hockenson",
+       "price": 100,
+       "point": 48.5
+      },
+      {
+       "name": "Under",
+       "description": "T. Hockenson",
+       "price": -110,
+       "point": 48.5
+      },
+      {
+       "name": "Over",
+       "description": "J. Reed",
+       "price": -115,
+       "point": 59.5
+      },
+      {
+       "name": "Under",
+       "description": "J. Reed",
+       "price": -120,
+       "point": 59.5
+      },
+      {
+       "name": "Over",
+       "description": "R. Doubs",
+       "price": 100,
+       "point": 42.5
+      },
+      {
+       "name": "Under",
+       "description": "R. Doubs",
+       "price": -110,
+       "point": 42.5
+      },
+      {
+       "name": "Over",
+       "description": "T. Kraft",
+       "price": -115,
+       "point": 39.0
+      },
+      {
+       "name": "Under",
+       "description": "T. Kraft",
+       "price": -110,
+       "point": 39.0
+      },
+      {
+       "name": "Over",
+       "description": "J. Nailor",
+       "price": -110,
+       "point": 22.5
+      },
+      {
+       "name": "Under",
+       "description": "J. Nailor",
+       "price": -120,
+       "point": 22.5
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "key": "caesars",
+   "title": "Caesars",
+   "markets": [
+    {
+     "key": "player_pass_yds",
+     "last_update": "2026-09-13T15:32:11Z",
+     "outcomes": [
+      {
+       "name": "Over",
+       "description": "J. Darnold",
+       "price": -108,
+       "point": 228.0
+      },
+      {
+       "name": "Under",
+       "description": "J. Darnold",
+       "price": -120,
+       "point": 228.0
+      },
+      {
+       "name": "Over",
+       "description": "J. Love",
+       "price": -110,
+       "point": 245.0
+      },
+      {
+       "name": "Under",
+       "description": "J. Love",
+       "price": -120,
+       "point": 245.0
+      }
+     ]
+    },
+    {
+     "key": "player_rush_yds",
+     "last_update": "2026-09-13T15:32:11Z",
+     "outcomes": [
+      {
+       "name": "Over",
+       "description": "A. Jones",
+       "price": -105,
+       "point": 64.5
+      },
+      {
+       "name": "Under",
+       "description": "A. Jones",
+       "price": -110,
+       "point": 64.5
+      },
+      {
+       "name": "Over",
+       "description": "J. Jacobs",
+       "price": 100,
+       "point": 71.0
+      },
+      {
+       "name": "Under",
+       "description": "J. Jacobs",
+       "price": -110,
+       "point": 71.0
+      },
+      {
+       "name": "Over",
+       "description": "T. Chandler",
+       "price": -110,
+       "point": 20.5
+      },
+      {
+       "name": "Under",
+       "description": "T. Chandler",
+       "price": -120,
+       "point": 20.5
+      }
+     ]
+    },
+    {
+     "key": "player_reception_yds",
+     "last_update": "2026-09-13T15:32:11Z",
+     "outcomes": [
+      {
+       "name": "Over",
+       "description": "J. Jefferson",
+       "price": 100,
+       "point": 83.5
+      },
+      {
+       "name": "Under",
+       "description": "J. Jefferson",
+       "price": -105,
+       "point": 83.5
+      },
+      {
+       "name": "Over",
+       "description": "J. Addison",
+       "price": -105,
+       "point": 51.5
+      },
+      {
+       "name": "Under",
+       "description": "J. Addison",
+       "price": -120,
+       "point": 51.5
+      },
+      {
+       "name": "Over",
+       "description": "T. Hockenson",
+       "price": 100,
+       "point": 48.5
+      },
+      {
+       "name": "Under",
+       "description": "T. Hockenson",
+       "price": -115,
+       "point": 48.5
+      },
+      {
+       "name": "Over",
+       "description": "J. Reed",
+       "price": 100,
+       "point": 59.5
+      },
+      {
+       "name": "Under",
+       "description": "J. Reed",
+       "price": -120,
+       "point": 59.5
+      },
+      {
+       "name": "Over",
+       "description": "R. Doubs",
+       "price": -110,
+       "point": 42.5
+      },
+      {
+       "name": "Under",
+       "description": "R. Doubs",
+       "price": -105,
+       "point": 42.5
+      },
+      {
+       "name": "Over",
+       "description": "T. Kraft",
+       "price": -108,
+       "point": 40.5
+      },
+      {
+       "name": "Under",
+       "description": "T. Kraft",
+       "price": -105,
+       "point": 40.5
+      },
+      {
+       "name": "Over",
+       "description": "J. Nailor",
+       "price": -108,
+       "point": 22.5
+      },
+      {
+       "name": "Under",
+       "description": "J. Nailor",
+       "price": -105,
+       "point": 22.5
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "key": "betrivers",
+   "title": "Betrivers",
+   "markets": [
+    {
+     "key": "player_pass_yds",
+     "last_update": "2026-09-13T15:32:11Z",
+     "outcomes": [
+      {
+       "name": "Over",
+       "description": "J. Darnold",
+       "price": -108,
+       "point": 227.5
+      },
+      {
+       "name": "Under",
+       "description": "J. Darnold",
+       "price": -110,
+       "point": 227.5
+      },
+      {
+       "name": "Over",
+       "description": "J. Love",
+       "price": -105,
+       "point": 244.5
+      },
+      {
+       "name": "Under",
+       "description": "J. Love",
+       "price": -120,
+       "point": 244.5
+      }
+     ]
+    },
+    {
+     "key": "player_rush_yds",
+     "last_update": "2026-09-13T15:32:11Z",
+     "outcomes": [
+      {
+       "name": "Over",
+       "description": "A. Jones",
+       "price": -110,
+       "point": 64.5
+      },
+      {
+       "name": "Under",
+       "description": "A. Jones",
+       "price": -105,
+       "point": 64.5
+      },
+      {
+       "name": "Over",
+       "description": "J. Jacobs",
+       "price": -105,
+       "point": 72.5
+      },
+      {
+       "name": "Under",
+       "description": "J. Jacobs",
+       "price": -115,
+       "point": 72.5
+      },
+      {
+       "name": "Over",
+       "description": "T. Chandler",
+       "price": -105,
+       "point": 20.5
+      },
+      {
+       "name": "Under",
+       "description": "T. Chandler",
+       "price": -115,
+       "point": 20.5
+      }
+     ]
+    },
+    {
+     "key": "player_reception_yds",
+     "last_update": "2026-09-13T15:32:11Z",
+     "outcomes": [
+      {
+       "name": "Over",
+       "description": "J. Jefferson",
+       "price": -115,
+       "point": 83.5
+      },
+      {
+       "name": "Under",
+       "description": "J. Jefferson",
+       "price": -120,
+       "point": 83.5
+      },
+      {
+       "name": "Over",
+       "description": "J. Addison",
+       "price": 100,
+       "point": 52.5
+      },
+      {
+       "name": "Under",
+       "description": "J. Addison",
+       "price": -110,
+       "point": 52.5
+      },
+      {
+       "name": "Over",
+       "description": "T. Hockenson",
+       "price": -110,
+       "point": 48.5
+      },
+      {
+       "name": "Under",
+       "description": "T. Hockenson",
+       "price": -115,
+       "point": 48.5
+      },
+      {
+       "name": "Over",
+       "description": "J. Reed",
+       "price": -115,
+       "point": 57.5
+      },
+      {
+       "name": "Under",
+       "description": "J. Reed",
+       "price": -115,
+       "point": 57.5
+      },
+      {
+       "name": "Over",
+       "description": "R. Doubs",
+       "price": -105,
+       "point": 42.5
+      },
+      {
+       "name": "Under",
+       "description": "R. Doubs",
+       "price": -120,
+       "point": 42.5
+      },
+      {
+       "name": "Over",
+       "description": "T. Kraft",
+       "price": 100,
+       "point": 40.0
+      },
+      {
+       "name": "Under",
+       "description": "T. Kraft",
+       "price": -110,
+       "point": 40.0
+      },
+      {
+       "name": "Over",
+       "description": "J. Nailor",
+       "price": 100,
+       "point": 23.5
+      },
+      {
+       "name": "Under",
+       "description": "J. Nailor",
+       "price": -115,
+       "point": 23.5
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
